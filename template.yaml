@@ -5,7 +5,7 @@ Description: Implementation of API Gateway and Swagger example
 Parameters:
   ApiName:
     Type: String
-    Default: dimitri-swagger-test
+    Default: lambdaless-api
   ApiStage:
     Type: String
     Default: dev 
