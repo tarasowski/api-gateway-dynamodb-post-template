@@ -1,0 +1,260 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: Implementation of API Gateway and Swagger example
+
+Parameters:
+  ApiName:
+    Type: String
+    Default: dimitri-swagger-test
+  ApiStage:
+    Type: String
+    Default: dev 
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+Resources:
+  SwaggerTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: 
+        Fn::Sub:
+          - ${apiname}-${apistage}
+          - {apiname: {Ref: ApiName}, apistage: {Ref: ApiStage}}
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  ApiKey:
+    DependsOn: 
+      - PlainApi
+      - PlainApiDeployment
+    Type: AWS::ApiGateway::ApiKey
+    Properties:
+      Name: 
+        Fn::Sub:
+          - ${apiname}-${apistage}-apikey
+          - {apiname: {Ref: ApiName}, apistage: {Ref: ApiStage}}
+      Enabled: true
+      StageKeys:
+        - RestApiId:
+            Ref: PlainApi
+          StageName: 
+            Ref: ApiStage
+
+  MyUsagePlan:
+    DependsOn: 
+      - ApiKey
+      - PlainApi
+      - PlainApiDeployment
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      ApiStages:
+        - ApiId: 
+            Ref: PlainApi
+          Stage: 
+            Ref: ApiStage
+
+  MyUsagePlanKey:
+    DependsOn:
+      - MyUsagePlan
+      - ApiKey
+      - PlainApi
+      - PlainApiDeployment
+    Type: AWS::ApiGateway::UsagePlanKey
+    Properties:
+      KeyId: 
+        Ref: ApiKey
+      KeyType: "API_KEY"
+      UsagePlanId:
+        Ref: MyUsagePlan
+
+  PlainApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: 
+        Ref: AWS::StackName
+
+  RootMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      HttpMethod: GET
+      Integration:
+        Type: MOCK
+      ResourceId:
+        Fn::GetAtt: [PlainApi, RootResourceId]
+      RestApiId:
+        Ref: PlainApi
+
+
+  ApiGatewayRootMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      HttpMethod: POST
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS
+        Uri: { "Fn::Sub": "arn:aws:apigateway:${AWS::Region}:dynamodb:action/PutItem" }
+        Credentials:
+          Fn::Sub:
+            - "arn:aws:iam::${AWS::AccountId}:role/${dynamoDbRole}"
+            - {dynamoDbRole: {Ref: DynamoDBRole}}
+        RequestTemplates:
+          "application/json": |
+             { 
+               "TableName": "dimitri-swagger-test-dev",
+               "Item": {
+                 "userId": {
+                   "S": "$input.path('$.userId')"
+                 },
+                 "name": {
+                   "S": "$input.path('$.name')"
+                 },
+                 "message": {
+                   "S": "$input.path('$.message')"
+                 }
+               }
+             }
+        IntegrationResponses:
+          - StatusCode: "200"
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        PassthroughBehavior: NEVER
+      RequestParameters:
+        method.request.header.x-api-key: true
+        method.request.header.Content-Type: true
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseModels:
+            application/json: 'Empty'
+          ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: true
+              method.response.header.Access-Control-Allow-Methods: true
+              method.response.header.Access-Control-Allow-Origin: true
+      ResourceId: 
+        Fn::GetAtt: [PlainApi, RootResourceId]
+      RestApiId:
+        Ref: PlainApi
+      RequestValidatorId:
+        Ref: RequestValidator
+
+  RootOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+            StatusCode: 200
+        PassthroughBehavior: NEVER
+        RequestTemplates:
+          "application/json": '{"statusCode": 200}'
+      MethodResponses:
+        - ResponseModels:
+            application/json: 'Empty'
+          ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: true
+              method.response.header.Access-Control-Allow-Methods: true
+              method.response.header.Access-Control-Allow-Origin: true
+          StatusCode: 200
+      ResourceId: 
+        Fn::GetAtt: [PlainApi, RootResourceId]
+      RestApiId:
+        Ref: PlainApi
+
+  RequestValidator:
+    Type: AWS::ApiGateway::RequestValidator
+    Properties:
+      Name: 
+        Fn::Sub:
+          - requestvalidator-${apiname}-${apistage}
+          - {apiname: {Ref: ApiName}, apistage: {Ref: ApiStage}}
+      RestApiId: 
+        Ref: PlainApi
+      ValidateRequestParameters: true 
+
+  PlainApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ApiGatewayRootMethod
+    Properties:
+      RestApiId:
+        Ref: PlainApi
+      StageName: 
+        Ref: ApiStage
+
+
+  DynamoDBRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 
+        Fn::Sub:
+          - ${apiname}-${apistage}-role
+          - {apiname: {Ref: ApiName}, apistage: {Ref: ApiStage}}
+      ManagedPolicyArns: 
+        - Ref: APIGatewayAPIPolicy
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: 
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+    DependsOn: 
+      - APIGatewayAPIPolicy
+
+  APIGatewayAPIPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Role for DynamoDb
+      Path: /test-apigateway/
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:DeleteItem
+              - dynamodb:UpdateItem
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:BatchGetItem
+              - dynamodb:BatchWriteItem
+            Resource:
+                - Fn::GetAtt: [SwaggerTable, Arn]
+Outputs:
+  Test:
+  ApiUrl:
+    Description: Url of your API endpoint
+    Value:
+      Fn::Join:
+        - ''
+        - - https://
+          - Ref: PlainApi 
+          - '.execute-api.'
+          - Ref: 'AWS::Region'
+          - '.amazonaws.com/'
+          - !Sub ${ApiStage}
