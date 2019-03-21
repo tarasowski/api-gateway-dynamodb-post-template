@@ -5,7 +5,7 @@ Description: Implementation of API Gateway and Swagger example
 Parameters:
   ApiName:
     Type: String
-    Default: lambdaless-api
+    Default: lambdaless-api-dynamodb
   ApiStage:
     Type: String
     Default: dev 
